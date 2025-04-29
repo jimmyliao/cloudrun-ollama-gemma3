@@ -1,0 +1,6 @@
+# Define the base model
+FROM gemma2:2b
+
+# Specify the adapter to apply
+# This path is relative to where models are stored *inside* the container (e.g., /ollama_models)
+ADAPTER ollama_models/gemma-2-2b-it-lora-sql

@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+huggingface_hub
+langchain
+langchain-community
+langchain-google-vertexai
+langgraph
+ollama
+faiss-cpu
+python-dotenv
+etils
+WebBaseLoader # Added for clarity, part of langchain-community
+RecursiveCharacterTextSplitter # Added for clarity, part of langchain
+httpx
+asyncio

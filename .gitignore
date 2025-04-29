@@ -172,3 +172,22 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+# Environment
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.log
+*.tmp
+*.swp
+.DS_Store
+
+# Ollama models (downloaded locally if testing)
+ollama_models/
+
+# Notebook Checkpoints
+.ipynb_checkpoints
