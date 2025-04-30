@@ -1,108 +1,149 @@
-# Load environment variables from .env file
-# This will overwrite any shell-exported variables with the same name
+# Makefile for Cloud Run Ollama Gemma Service
+
+# Available machine types for cloud-build
+MACHINE_TYPES := e2-highcpu-32 e2-highcpu-16 e2-standard-8
+MACHINE_TYPE ?= e2-highcpu-32
+
+# Available GPU types for cloudrun-deploy
+GPU_TYPES := nvidia-l4 nvidia-t4 nvidia-a100
+GPU_TYPE ?= nvidia-l4
+
+# Default timeout in seconds
+TIMEOUT ?= 3600 # Default timeout 1 hour
+
+# Load environment variables from .env file if it exists
 ifneq (,$(wildcard ./.env))
     include .env
     export
 endif
 
-# Define variables (allow overriding from .env or command line)
-PROJECT_ID ?= $(PROJECT_ID)
-REGION ?= $(REGION)
-SERVICE_NAME ?= ollama-gemma-rag-agent
-IMAGE_NAME ?= ollama-gemma-rag-image
-REPOSITORY_NAME ?= ollama-gemma-repo # Artifact Registry repo name
-HF_TOKEN ?= $(HF_TOKEN)
+# Check if required environment variables are set
+# REQUIRED_VARS := HUGGINGFACE_TOKEN PROJECT_ID REGION SERVICE_NAME REPO_NAME
+# $(foreach var,$(REQUIRED_VARS),
+#     $(if $(value $(var)),,
+#         $(error Error: Environment variable $(var) is not set. Please check your .env file or environment.)
+#     )
+# )
 
-# Construct full image URI
-IMAGE_URI = $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPOSITORY_NAME)/$(IMAGE_NAME):latest
+# Define the virtual environment directory
+VENV_DIR := .venv
 
-# Define python interpreter
-PYTHON = python3
-
-# Phony targets (targets that are not files)
-.PHONY: init build deploy clean help all
-
-# Default target
-all: help
-
-## --------------------
-## Setup & Initialization
-## --------------------
-init: check-env ## Alias for check-env
-
-check-env:
-	@echo "--- Checking Environment Variables ---"
-	@if [ ! -f .env ]; then \
-		echo "'.env' file not found. Copying '.env.example' to '.env'."; \
-		cp .env.example .env; \
-		echo "Please fill in the required values (HF_TOKEN, PROJECT_ID, REGION) in the '.env' file."; \
-		exit 1; \
-	fi
-	@$(PYTHON) -c 'import sys; from helper import check_env_vars; sys.exit(0) if check_env_vars() else sys.exit(1)'
-	@echo "---------------------------------------"
-
-## --------------------
-## Build Process
-## --------------------
-build: init
-	@echo "--- Building Docker Image via Cloud Build ---"
-	@if [ -z "$(HF_TOKEN)" ]; then \
-		echo "Error: HF_TOKEN is not set in your .env file or environment."; \
-		exit 1; \
-	fi
-	@echo "Configuring Docker for Artifact Registry: $(REGION)-docker.pkg.dev"
-	@gcloud auth configure-docker $(REGION)-docker.pkg.dev --quiet
-	@echo "Ensuring Artifact Registry Repository '$(REPOSITORY_NAME)' exists..."
-	@gcloud artifacts repositories create $(REPOSITORY_NAME) --project=$(PROJECT_ID) --location=$(REGION) --repository-format=docker --quiet || echo "Repository '$(REPOSITORY_NAME)' already exists or failed to create (permission issue?). Continuing build..."
-	@echo "Submitting build to Cloud Build..."
-	@echo "Image URI: $(IMAGE_URI)"
-	@gcloud builds submit . --tag $(IMAGE_URI) --project=$(PROJECT_ID) \
-		--build-arg=HF_TOKEN=$(HF_TOKEN) \
-		--machine-type=e2-highcpu-8 \
-		--timeout=45m
-	@echo "Cloud Build submitted. Monitor progress in the GCP console."
-	@echo "---------------------------------------------"
-
-## --------------------
-## Deployment Process
-## --------------------
-deploy: init # Depends on init for variables, assumes image is built (implicitly by build target usually run first)
-	@echo "--- Deploying to Cloud Run ---"
-	@if [ -z "$(PROJECT_ID)" ] || [ -z "$(REGION)" ] || [ -z "$(SERVICE_NAME)" ]; then \
-		echo "Error: PROJECT_ID, REGION, or SERVICE_NAME is not set."; \
-		exit 1; \
-	fi
-	@echo "Deploying service '$(SERVICE_NAME)' to region '$(REGION)' using image '$(IMAGE_URI)'"
-	@gcloud run deploy $(SERVICE_NAME) \
-		--image=$(IMAGE_URI) \
-		--project=$(PROJECT_ID) \
-		--region=$(REGION) \
-		--platform=managed \
-		--port=8080 \
-		--allow-unauthenticated \
-		--cpu=2 \
-		--memory=8Gi \
-		--concurrency=2 \
-		--timeout=600s \
-		--min-instances=0 \
-		--max-instances=2 \
-		--execution-environment=gen2 
-	@echo "-----------------------------"
-
-## --------------------
-## Utility Targets
-## --------------------
-clean:
-	@echo "--- Cleaning up (Placeholder) ---"
-	@# Add commands to remove local build artifacts if any (e.g., __pycache__)
-	@find . -name '__pycache__' -exec rm -rf {} + 
-	@find . -name '*.pyc' -exec rm -f {} + 
-	@echo "Cleanup complete."
+.PHONY: help init install check-tools check-env cloud-build cloudrun-deploy clean
 
 help:
-	@echo "Available commands:"
-	@echo "  make init          Check .env file and required variables (HF_TOKEN, PROJECT_ID, REGION)."
-	@echo "  make build         Build the Docker image using Google Cloud Build."
-	@echo "  make deploy        Deploy the built image to Google Cloud Run."
-	@echo "  make clean         Remove temporary Python cache files."
-	@echo "  make all           Show this help message (default)."
+	@echo "Usage: make [target] [VARIABLE=value]"
+	@echo ""
+	@echo "Targets:"
+	@echo "  help               Show this help message."
+	@echo "  init               Initialize the project: check tools, check .env, create uv environment."
+	@echo "  install            Install dependencies and configure GCP settings."
+	@echo "  cloud-build        Build the Docker image using Google Cloud Build."
+	@echo "                     Variables: MACHINE_TYPE (default: $(MACHINE_TYPE))"
+	@echo "                     Available types: $(MACHINE_TYPES)"
+	@echo "  cloudrun-deploy    Deploy the service to Google Cloud Run."
+	@echo "                     Variables: TIMEOUT (default: $(TIMEOUT)s), GPU_TYPE (default: $(GPU_TYPE))"
+	@echo "                     Available GPU types: $(GPU_TYPES)"
+	@echo "  clean              Remove virtual environment and __pycache__ directories."
+	@echo ""
+	@echo "Variables:"
+	@echo "  PROJECT_ID         Your Google Cloud project ID (required, set in .env)."
+	@echo "  REGION             Google Cloud region (required, set in .env)."
+	@echo "  SERVICE_NAME       Cloud Run service name (required, set in .env)."
+	@echo "  REPO_NAME          Artifact Registry repository name (required, set in .env)."
+	@echo "  HUGGINGFACE_TOKEN  Hugging Face token (required, set in .env)."
+	@echo "  MACHINE_TYPE       Cloud Build machine type (optional, default: $(MACHINE_TYPE))."
+	@echo "  GPU_TYPE           Cloud Run GPU type (optional, default: $(GPU_TYPE))."
+	@echo "  TIMEOUT            Cloud Run request timeout in seconds (optional, default: $(TIMEOUT))."
+
+# Check for required command-line tools
+check-tools:
+	@echo "Checking required tools..."
+	@command -v uv >/dev/null 2>&1 || { echo >&2 "Error: uv is not installed. Please install it (e.g., 'pip install uv')."; exit 1; }
+	@command -v gcloud >/dev/null 2>&1 || { echo >&2 "Error: gcloud CLI is not installed. Please install Google Cloud SDK."; exit 1; }
+	@command -v curl >/dev/null 2>&1 || { echo >&2 "Error: curl is not installed."; exit 1; }
+	@command -v ollama >/dev/null 2>&1 || { echo >&2 "Warning: ollama is not installed locally. It's needed inside the container."; }
+	@echo "All required tools found."
+
+# Check if .env file exists and contains required variables
+check-env:
+	@echo "Checking .env file..."
+	@test -f .env || { echo >&2 "Error: .env file not found. Please create it from .env.example."; exit 1; }
+	@for var in $(REQUIRED_VARS); do \
+		grep -q "$$var=" .env || { echo >&2 "Error: Environment variable $$var is not set in .env file."; exit 1; }; \
+	done
+	@echo ".env file found and required variables are set."
+
+# Initialize project with uv virtual environment
+init: check-tools
+	@echo "Initializing uv virtual environment..."
+	@uv venv $(VENV_DIR) || { echo >&2 "Error: Failed to create virtual environment."; exit 1; }
+	@echo "Virtual environment created/updated in $(VENV_DIR)"
+	@echo "Project initialized. Run 'make install' next."
+
+# Install dependencies and configure GCP
+install: $(VENV_DIR)/pyvenv.cfg
+	@echo "Installing dependencies using uv..."
+	@uv pip sync requirements.txt --python $(VENV_DIR)/bin/python || { echo >&2 "Error: Failed to install dependencies."; exit 1; }
+	@echo "Configuring Google Cloud SDK..."
+	@gcloud config set project $(PROJECT_ID) || { echo >&2 "Error: Failed to set GCP project."; exit 1; }
+	@gcloud config set run/region $(REGION) || { echo >&2 "Error: Failed to set GCP region."; exit 1; }
+	@echo "Checking/Creating Artifact Registry repository $(REPO_NAME)..."
+	@-gcloud artifacts repositories describe $(REPO_NAME) --location=$(REGION) > /dev/null 2>&1 || \
+	    gcloud artifacts repositories create $(REPO_NAME) --repository-format=docker --location=$(REGION) --description="Docker repository for $(SERVICE_NAME)" || \
+	    { echo >&2 "Error: Failed to create Artifact Registry repository $(REPO_NAME)."; exit 1; }
+	@echo "Configuring Docker authentication for Artifact Registry..."
+	@gcloud auth configure-docker $(REGION)-docker.pkg.dev || { echo >&2 "Error: Failed to configure Docker authentication."; exit 1; }
+	@echo "Installation and configuration complete."
+
+# Ensure virtualenv exists before install
+$(VENV_DIR)/pyvenv.cfg:
+	@echo "Virtual environment not found. Run 'make init' first."
+	@exit 1
+
+# Build Docker image using Cloud Build with parameterized machine-type
+cloud-build:
+	@echo "Building Docker image with Cloud Build..."
+	@echo "Using machine type: $(MACHINE_TYPE)"
+	@if ! echo "$(MACHINE_TYPES)" | grep -q "$(MACHINE_TYPE)"; then \
+		echo >&2 "Error: Invalid machine type '$(MACHINE_TYPE)'. Available types: $(MACHINE_TYPES)"; \
+		exit 1; \
+	fi
+	@gcloud builds submit \
+		--tag $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO_NAME)/$(SERVICE_NAME) \
+		--machine-type $(MACHINE_TYPE) \
+		. || { echo >&2 "Error: Cloud Build failed."; exit 1; }
+	@echo "Cloud Build finished successfully."
+
+# Deploy to Cloud Run with parameterized timeout and GPU type
+cloudrun-deploy:
+	@echo "Deploying service $(SERVICE_NAME) to Cloud Run..."
+	@echo "Using GPU type: $(GPU_TYPE) and timeout: $(TIMEOUT)s"
+	@if ! echo "$(GPU_TYPES)" | grep -q "$(GPU_TYPE)"; then \
+		echo >&2 "Error: Invalid GPU type '$(GPU_TYPE)'. Available types: $(GPU_TYPES)"; \
+		exit 1; \
+	fi
+	@gcloud run deploy $(SERVICE_NAME) \
+		--image $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO_NAME)/$(SERVICE_NAME) \
+		--region $(REGION) \
+		--platform managed \
+		--concurrency 4 \
+		--cpu 8 \
+		--set-env-vars OLLAMA_NUM_PARALLEL=4 \
+		--gpu 1 \
+		--gpu-type $(GPU_TYPE) \
+		--max-instances 1 \
+		--memory 32Gi \
+		--no-allow-unauthenticated \
+		--no-cpu-throttling \
+		--timeout=$(TIMEOUT) \
+		--set-env-vars="HUGGING_FACE_HUB_TOKEN=$(HUGGINGFACE_TOKEN)" \
+		--execution-environment=gen2 \
+		|| { echo >&2 "Error: Cloud Run deployment failed."; exit 1; }
+	@echo "Cloud Run deployment initiated for $(SERVICE_NAME)."
+
+# Clean up virtual environment and __pycache__
+clean:
+	@echo "Cleaning up..."
+	@rm -rf $(VENV_DIR)
+	@find . -type d -name "__pycache__" -exec rm -rf {} +
+	@echo "Cleanup complete."
