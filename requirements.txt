@@ -9,7 +9,6 @@ ollama
 faiss-cpu
 python-dotenv
 etils
-WebBaseLoader # Added for clarity, part of langchain-community
-RecursiveCharacterTextSplitter # Added for clarity, part of langchain
 httpx
 asyncio
+python-dotenv
