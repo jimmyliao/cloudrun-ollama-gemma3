@@ -43,18 +43,6 @@ https://cloud.google.com/run/docs/tutorials/gpu-gemma-with-ollama
       --max-instances 1 \
       --memory 32Gi \
       --no-allow-unauthenticated \
-      --no-cpu-throttling \gcloud run deploy ollama-gemma \
-  --image us-central1-docker.pkg.dev/gde-kj/ollama-gemma3/ollama-gemma \
-  --concurrency 4 \
-  --cpu 8 \
-  --set-env-vars OLLAMA_NUM_PARALLEL=4 \
-  --gpu 1 \
-  --gpu-type nvidia-l4 \
-  --max-instances 1 \
-  --memory 32Gi \
-  --no-allow-unauthenticated \
-  --no-gpu-zonal-redundancy \
-  --no-cpu-throttling \
-  --timeout=600
-      --timeout=600
+      --no-cpu-throttling \
+      --timeout=120
     ```
