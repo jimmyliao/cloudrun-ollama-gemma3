@@ -91,7 +91,7 @@ install: $(VENV_DIR)/pyvenv.cfg
 	@-gcloud artifacts repositories describe $(REPO_NAME) --location=$(REGION) > /dev/null 2>&1 || \
 	    gcloud artifacts repositories create $(REPO_NAME) --repository-format=docker --location=$(REGION) --description="Docker repository for $(SERVICE_NAME)" || \
 	    { echo >&2 "Error: Failed to create Artifact Registry repository $(REPO_NAME)."; exit 1; }
-	@echo "Configuring Docker authentication for Artifact Registry..."
+	@echo "Configuring Docker authentication for Artifact Registry...$(REGION)-docker.pkg.dev"
 	@gcloud auth configure-docker $(REGION)-docker.pkg.dev || { echo >&2 "Error: Failed to configure Docker authentication."; exit 1; }
 	@echo "Installation and configuration complete."
 
