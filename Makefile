@@ -9,7 +9,7 @@ GPU_TYPES := nvidia-l4 nvidia-t4 nvidia-a100
 GPU_TYPE ?= nvidia-l4
 
 # Default timeout in seconds
-TIMEOUT ?= 3600 # Default timeout 1 hour
+TIMEOUT ?= 120 # Default timeout 2 minutes
 
 # Load environment variables from .env file if it exists
 ifneq (,$(wildcard ./.env))
