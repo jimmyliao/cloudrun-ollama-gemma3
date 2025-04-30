@@ -60,6 +60,12 @@ check-tools:
 	@echo "Checking required tools..."
 	@command -v uv >/dev/null 2>&1 || { echo >&2 "Error: uv is not installed. Please install it (e.g., 'pip install uv')."; exit 1; }
 	@command -v gcloud >/dev/null 2>&1 || { echo >&2 "Error: gcloud CLI is not installed. Please install Google Cloud SDK."; exit 1; }
+	@GCLOUD_VERSION=$$(gcloud version --format="value(Google Cloud SDK)" | cut -d' ' -f4); \
+	if [ "$$GCLOUD_VERSION" != "519.0.0" ]; then \
+		echo >&2 "Error: Google Cloud SDK version 519.0.0 is required. Current version: $$GCLOUD_VERSION"; \
+		echo >&2 "Please update using: gcloud components update --version=519.0.0"; \
+		exit 1; \
+	fi
 	@command -v curl >/dev/null 2>&1 || { echo >&2 "Error: curl is not installed."; exit 1; }
 	@command -v ollama >/dev/null 2>&1 || { echo >&2 "Warning: ollama is not installed locally. It's needed inside the container."; }
 	@echo "All required tools found."
@@ -84,6 +90,12 @@ init: check-tools
 install: $(VENV_DIR)/pyvenv.cfg
 	@echo "Installing dependencies using uv..."
 	@uv pip sync requirements.txt --python $(VENV_DIR)/bin/python || { echo >&2 "Error: Failed to install dependencies."; exit 1; }
+	@echo "Ensuring Google Cloud SDK version 519.0.0 is installed..."
+	@GCLOUD_VERSION=$$(gcloud version --format="value(Google Cloud SDK)" | cut -d' ' -f4); \
+	if [ "$$GCLOUD_VERSION" != "519.0.0" ]; then \
+		echo "Updating Google Cloud SDK to version 519.0.0..."; \
+		gcloud components update --version=519.0.0 || { echo >&2 "Error: Failed to update Google Cloud SDK to version 519.0.0."; exit 1; }; \
+	fi
 	@echo "Configuring Google Cloud SDK..."
 	@gcloud config set project $(PROJECT_ID) || { echo >&2 "Error: Failed to set GCP project."; exit 1; }
 	@gcloud config set run/region $(REGION) || { echo >&2 "Error: Failed to set GCP region."; exit 1; }
