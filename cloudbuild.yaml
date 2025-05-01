@@ -1,0 +1,28 @@
+steps:
+  # Print build information for logging purposes
+  - name: 'gcr.io/cloud-builders/curl'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "Starting build with the following parameters:"
+        echo "Model: ${_MODEL_NAME}"
+        echo "Image: ${_IMAGE_NAME}"
+
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '--build-arg', 'MODEL_NAME=${_MODEL_NAME}',
+      '-t', '${_IMAGE_NAME}',
+      '.'
+    ]
+    timeout: '3600s'
+
+substitutions:
+  _MODEL_NAME: '${MODEL_NAME}'  # Default model, can be overridden from .env via Makefile
+  _IMAGE_NAME: '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_SERVICE_NAME}'
+
+timeout: '3600s'
+options:
+  dynamic_substitutions: true
