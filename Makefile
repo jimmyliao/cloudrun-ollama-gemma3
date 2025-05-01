@@ -8,11 +8,12 @@ MACHINE_TYPE ?= e2-highcpu-32
 GPU_TYPES := nvidia-l4 nvidia-t4 nvidia-a100
 GPU_TYPE ?= nvidia-l4
 
+# Available Gemma models
+MODEL_TYPES := gemma3:4b gemma3:27b-it-qat
+MODEL_NAME ?= gemma3:4b
+
 # Default timeout in seconds
 TIMEOUT ?= 120 # Default timeout 2 minutes
-
-# Default Gemma model if not set in .env
-MODEL_NAME ?= gemma3:4b
 
 # Load environment variables from .env file if it exists
 ifneq (,$(wildcard ./.env))
@@ -31,7 +32,7 @@ endif
 # Define the virtual environment directory
 VENV_DIR := .venv
 
-.PHONY: help init install check-tools check-env cloud-build local-build local-run cloudrun-deploy clean
+.PHONY: help init install check-tools check-env cloud-build cloud-build-local cloud-build-push cloudrun-deploy clean
 
 help:
 	@echo "Usage: make [target] [VARIABLE=value]"
@@ -43,13 +44,11 @@ help:
 	@echo "  cloud-build        Build the Docker image using Google Cloud Build."
 	@echo "                     Variables: MACHINE_TYPE (default: $(MACHINE_TYPE)), MODEL_NAME (default: $(MODEL_NAME))"
 	@echo "                     Available machine types: $(MACHINE_TYPES)"
-	@echo "                     Supported models: gemma3:4b, gemma3:27b-it-qat, etc."
-	@echo "  local-build        Build the Docker image locally on Mac M1."
+	@echo "                     Available model types: $(MODEL_TYPES)"
+	@echo "  cloud-build-local  Build the Docker image locally on M1 Mac (amd64 platform)."
 	@echo "                     Variables: MODEL_NAME (default: $(MODEL_NAME))"
-	@echo "                     This builds for arm64 architecture."
-	@echo "  local-run          Run the locally built Docker image."
-	@echo "                     Variables: MODEL_NAME (default: $(MODEL_NAME))"
-	@echo "                     Automatically builds the image if it doesn't exist."
+	@echo "  cloud-build-push   Push the locally built Docker image to Artifact Registry."
+	@echo "                     Must be run after cloud-build-local."
 	@echo "  cloudrun-deploy    Deploy the service to Google Cloud Run."
 	@echo "                     Variables: TIMEOUT (default: $(TIMEOUT)s), GPU_TYPE (default: $(GPU_TYPE))"
 	@echo "                     Available GPU types: $(GPU_TYPES)"
@@ -61,11 +60,10 @@ help:
 	@echo "  SERVICE_NAME       Cloud Run service name (required, set in .env)."
 	@echo "  REPO_NAME          Artifact Registry repository name (required, set in .env)."
 	@echo "  HUGGINGFACE_TOKEN  Hugging Face token (required, set in .env)."
+	@echo "  MODEL_NAME         Gemma model to use (optional, default: $(MODEL_NAME))."
 	@echo "  MACHINE_TYPE       Cloud Build machine type (optional, default: $(MACHINE_TYPE))."
 	@echo "  GPU_TYPE           Cloud Run GPU type (optional, default: $(GPU_TYPE))."
 	@echo "  TIMEOUT            Cloud Run request timeout in seconds (optional, default: $(TIMEOUT))."
-	@echo "  MODEL_NAME         Gemma model to use (optional, default: $(MODEL_NAME))."
-	@echo "  DOCKERFILE         Dockerfile to use (optional, default: $(DOCKERFILE))."
 
 # Check for required command-line tools
 check-tools:
@@ -124,120 +122,45 @@ $(VENV_DIR)/pyvenv.cfg:
 	@echo "Virtual environment not found. Run 'make init' first."
 	@exit 1
 
-# Build Docker image using Cloud Build with parameterized machine-type and model
+# Build Docker image using Cloud Build with parameterized machine-type and model name
 cloud-build:
 	@echo "Building Docker image with Cloud Build..."
-	@echo "Using machine type: $(MACHINE_TYPE)"
-	@echo "Using model: $(MODEL_NAME)"
+	@echo "Using machine type: $(MACHINE_TYPE) and model: $(MODEL_NAME)"
 	@if ! echo "$(MACHINE_TYPES)" | grep -q "$(MACHINE_TYPE)"; then \
 		echo >&2 "Error: Invalid machine type '$(MACHINE_TYPE)'. Available types: $(MACHINE_TYPES)"; \
 		exit 1; \
 	fi
+	@if ! echo "$(MODEL_TYPES)" | grep -q "$(MODEL_NAME)"; then \
+		echo >&2 "Error: Invalid model name '$(MODEL_NAME)'. Available models: $(MODEL_TYPES)"; \
+		exit 1; \
+	fi
 	@gcloud builds submit \
+		--tag $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO_NAME)/$(SERVICE_NAME) \
 		--machine-type $(MACHINE_TYPE) \
-		--config=cloudbuild.yaml \
-		--substitutions=_MODEL_NAME=$(MODEL_NAME),_REGION=$(REGION),_PROJECT_ID=$(PROJECT_ID),_REPO_NAME=$(REPO_NAME),_SERVICE_NAME=$(SERVICE_NAME) \
+		--substitutions=_MODEL_NAME=$(MODEL_NAME) \
 		. || { echo >&2 "Error: Cloud Build failed."; exit 1; }
 	@echo "Cloud Build finished successfully."
 
-# Build Docker image locally on Mac M1
-local-build:
-	@echo "Building Docker image locally from Apple Silicon ..."
-	@echo "Using model: $(MODEL_NAME)"
-	@echo "This will build for arm64 architecture (for local use)"
-	@if [ -z "$(MODEL_NAME)" ]; then \
-		echo >&2 "Error: MODEL_NAME is not set. Please set it in .env file or pass as parameter."; \
-		exit 1; \
-	fi
-	@MODEL_TAG=$$(echo "$(MODEL_NAME)" | sed 's/:/-/g'); \
-	docker build \
-		--platform linux/arm64 \
-		--build-arg MODEL_NAME=$(MODEL_NAME) \
-		-t "ollama-gemma:$$MODEL_TAG" \
-		. || { echo >&2 "Error: Local build failed."; exit 1; }
-	@echo "Local build finished successfully."
-	@echo "To run the container locally: make local-run"
-
-# Build Docker image for Cloud Run (amd64 architecture)
+# Build Docker image locally on M1 Mac for amd64 platform
 cloud-build-local:
-	@echo "Building Docker image locally for Cloud Run (amd64)..."
+	@echo "Building Docker image locally for amd64 platform..."
 	@echo "Using model: $(MODEL_NAME)"
-	@echo "This will build for amd64 architecture (for Cloud Run)"
-	@if [ -z "$(MODEL_NAME)" ]; then \
-		echo >&2 "Error: MODEL_NAME is not set. Please set it in .env file or pass as parameter."; \
+	@if ! echo "$(MODEL_TYPES)" | grep -q "$(MODEL_NAME)"; then \
+		echo >&2 "Error: Invalid model name '$(MODEL_NAME)'. Available models: $(MODEL_TYPES)"; \
 		exit 1; \
 	fi
-	@MODEL_TAG=$$(echo "$(MODEL_NAME)" | sed 's/:/-/g'); \
-	REMOTE_TAG="$(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO_NAME)/ollama-gemma:$$MODEL_TAG"; \
-	docker build \
-		--platform linux/amd64 \
+	@docker build \
+		--platform=linux/amd64 \
 		--build-arg MODEL_NAME=$(MODEL_NAME) \
-		-t "ollama-gemma-amd64:$$MODEL_TAG" \
-		-t "$$REMOTE_TAG" \
-		. || { echo >&2 "Error: Cloud build failed."; exit 1; }
-	@echo "Cloud build finished successfully with tags: ollama-gemma-amd64:$$MODEL_TAG and $$REMOTE_TAG"
+		-t $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO_NAME)/$(SERVICE_NAME) \
+		. || { echo >&2 "Error: Local Docker build failed."; exit 1; }
+	@echo "Local Docker build finished successfully."
 
-# Push the locally built Docker image to Artifact Registry
-local-push:
+# Push locally built Docker image to Artifact Registry
+cloud-build-push:
 	@echo "Pushing Docker image to Artifact Registry..."
-	@echo "Using model: $(MODEL_NAME)"
-	@echo "IMPORTANT: Building amd64 image for Cloud Run compatibility"
-	@MODEL_TAG=$$(echo "$(MODEL_NAME)" | sed 's/:/-/g'); \
-	REMOTE_TAG="$(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO_NAME)/ollama-gemma:$$MODEL_TAG"; \
-	$(MAKE) cloud-build-local; \
-	echo "Pushing image to Artifact Registry..."; \
-	docker push "$$REMOTE_TAG" || { echo >&2 "Error: Failed to push image. Make sure you're authenticated with 'gcloud auth configure-docker $(REGION)-docker.pkg.dev'"; exit 1; }; \
-	echo "Image successfully pushed to Artifact Registry as $$REMOTE_TAG."
-
-# Run the locally built Docker image
-local-run:
-	@echo "Running Ollama Gemma container locally..."
-	@echo "Using model: $(MODEL_NAME)"
-	@echo "Stopping any running Ollama container..."
-	@docker stop ollama-gemma-container >/dev/null 2>&1 || true
-	@MODEL_TAG=$$(echo "$(MODEL_NAME)" | sed 's/:/-/g'); \
-	if ! docker image inspect "ollama-gemma:$$MODEL_TAG" > /dev/null 2>&1; then \
-		echo "Image ollama-gemma:$$MODEL_TAG not found. Building it first..."; \
-		$(MAKE) local-build; \
-	fi; \
-	echo "Starting container on http://localhost:8080"; \
-	echo "Press Ctrl+C to stop the container"; \
-	CONTAINER_NAME="ollama-gemma-container"; \
-	if [[ "$(MODEL_NAME)" == *"27b"* || "$(MODEL_NAME)" == *"12b"* ]]; then \
-		echo "Using 4-bit quantization for large model to reduce memory usage"; \
-		docker run --rm --name $$CONTAINER_NAME -p 8080:8080 \
-		  -e OLLAMA_FLASH_ATTENTION=1 \
-		  -e OLLAMA_4BIT=1 \
-		  -e OLLAMA_KV_CACHE_TYPE=q4_0 \
-		  "ollama-gemma:$$MODEL_TAG"; \
-	else \
-		docker run --rm --name $$CONTAINER_NAME -p 8080:8080 \
-		  -e OLLAMA_FLASH_ATTENTION=1 \
-		  "ollama-gemma:$$MODEL_TAG"; \
-	fi
-
-# Push the locally built Docker image to Artifact Registry
-local-push:
-	@echo "Pushing Docker image to Artifact Registry..."
-	@echo "Using model: $(MODEL_NAME)"
-	@echo "IMPORTANT: Building amd64 image for Cloud Run compatibility"
-	@MODEL_TAG=$$(echo "$(MODEL_NAME)" | sed 's/:/-/g'); \
-	REMOTE_TAG="$(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO_NAME)/ollama-gemma:$$MODEL_TAG"; \
-	$(MAKE) cloud-build-local; \
-	echo "Pushing image to Artifact Registry..."; \
-	docker push "$$REMOTE_TAG" || { echo >&2 "Error: Failed to push image. Make sure you're authenticated with 'gcloud auth configure-docker $(REGION)-docker.pkg.dev'"; exit 1; }; \
-	echo "Image successfully pushed to Artifact Registry as $$REMOTE_TAG."
-
-# Test Ollama API with the specified model
-test:
-	@echo "Testing Ollama API with model: $(MODEL_NAME)"
-	@echo "URL: http://localhost:8080"
-	@echo -e "\nChecking model information..."
-	@curl -s http://localhost:8080/api/show -d '{"model": "$(MODEL_NAME)"}' | jq .
-	@echo -e "\nGenerating completion..."
-	@curl -s -X POST http://localhost:8080/api/generate \
-	  -H "Content-Type: application/json" \
-	  -d '{"model": "$(MODEL_NAME)", "prompt": "Write a poem about Gemma3"}' | jq .
+	@docker push $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO_NAME)/$(SERVICE_NAME) || { echo >&2 "Error: Docker push failed."; exit 1; }
+	@echo "Docker image pushed successfully to Artifact Registry."
 
 # Deploy to Cloud Run with parameterized timeout and GPU type
 cloudrun-deploy:
@@ -247,39 +170,20 @@ cloudrun-deploy:
 		echo >&2 "Error: Invalid GPU type '$(GPU_TYPE)'. Available types: $(GPU_TYPES)"; \
 		exit 1; \
 	fi
-	@echo "Model being deployed: $(MODEL_NAME)"
-	@MODEL_TAG=$$(echo "$(MODEL_NAME)" | sed 's/:/-/g'); \
-	REMOTE_TAG="$(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO_NAME)/ollama-gemma:$$MODEL_TAG"; \
-	echo "Docker image tag: $$MODEL_TAG"; \
-	echo "Remote image: $$REMOTE_TAG"; \
-	if [[ "$(MODEL_NAME)" == *"27b"* ]]; then \
-		echo "Detected 27b model, using maximum allowed resources"; \
-		MEMORY=32Gi; \
-		CPU=8; \
-		TIMEOUT_VALUE=$(TIMEOUT); \
-		CONCURRENCY=1; \
-		echo "Note: Cloud Run limits memory to 32Gi for 8 CPU cores"; \
-	else \
-		echo "Using standard resource allocation"; \
-		MEMORY=32Gi; \
-		CPU=8; \
-		TIMEOUT_VALUE=$(TIMEOUT); \
-		CONCURRENCY=4; \
-	fi; \
-	gcloud run deploy $(SERVICE_NAME) \
-		--image $$REMOTE_TAG \
+	@gcloud run deploy $(SERVICE_NAME) \
+		--image $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO_NAME)/$(SERVICE_NAME) \
 		--region $(REGION) \
 		--platform managed \
-		--concurrency $$CONCURRENCY \
-		--cpu $$CPU \
-		--set-env-vars OLLAMA_NUM_PARALLEL=$$CONCURRENCY,OLLAMA_MODEL=$(MODEL_NAME),OLLAMA_FLASH_ATTENTION=1,OLLAMA_KV_CACHE_TYPE=q4_0 \
+		--concurrency 4 \
+		--cpu 8 \
+		--set-env-vars OLLAMA_NUM_PARALLEL=4 \
 		--gpu 1 \
 		--gpu-type $(GPU_TYPE) \
 		--max-instances 1 \
-		--memory $$MEMORY \
+		--memory 32Gi \
 		--no-allow-unauthenticated \
 		--no-cpu-throttling \
-		--timeout=$$TIMEOUT_VALUE \
+		--timeout=$(TIMEOUT) \
 		--set-env-vars="HUGGING_FACE_HUB_TOKEN=$(HUGGINGFACE_TOKEN)" \
 		--execution-environment=gen2 \
 		|| { echo >&2 "Error: Cloud Run deployment failed."; exit 1; }

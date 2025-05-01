@@ -1,28 +1,21 @@
 steps:
-  # Print build information for logging purposes
-  - name: 'gcr.io/cloud-builders/curl'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        echo "Starting build with the following parameters:"
-        echo "Model: ${_MODEL_NAME}"
-        echo "Image: ${_IMAGE_NAME}"
-
-  # Build the Docker image
+  # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
-    args: [
-      'build',
-      '--build-arg', 'MODEL_NAME=${_MODEL_NAME}',
-      '-t', '${_IMAGE_NAME}',
-      '.'
-    ]
-    timeout: '3600s'
+    args: ['build', 
+           '--build-arg', 'MODEL_NAME=${_MODEL_NAME}',
+           '-t', '$LOCATION-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$SERVICE_NAME', 
+           '.']
+  # Push the container image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$LOCATION-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$SERVICE_NAME']
 
+# Substitution variables
 substitutions:
-  _MODEL_NAME: '${MODEL_NAME}'  # Default model, can be overridden from .env via Makefile
-  _IMAGE_NAME: '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_SERVICE_NAME}'
+  _MODEL_NAME: gemma3:4b  # Default model, can be overridden
 
-timeout: '3600s'
-options:
-  dynamic_substitutions: true
+# Store images in Artifact Registry
+images:
+  - '$LOCATION-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$SERVICE_NAME'
+
+# Use specified timeout
+timeout: 3600s

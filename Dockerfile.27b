@@ -13,9 +13,7 @@ ENV OLLAMA_DEBUG=false
 ENV OLLAMA_KEEP_ALIVE=-1
 
 # Store the model weights in the container image
-# Use MODEL_NAME from build arg with default fallback to gemma3:4b
-ARG MODEL_NAME=gemma3:4b
-ENV MODEL=${MODEL_NAME}
+ENV MODEL=gemma3:27b-it-qat
 RUN ollama serve & sleep 5 && ollama pull $MODEL
 
 # Start Ollama
